@@ -4,12 +4,11 @@ RAG 엔진: ChromaDB 및 LangChain 로직
 import os
 from typing import List, Tuple, Dict, Any
 import chromadb
-from chromadb.config import Settings
+# from chromadb.config import Settings (구버전 코드 삭제)
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 import tiktoken
-
 
 class RAGEngine:
     """RAG 엔진 클래스"""
@@ -17,7 +16,6 @@ class RAGEngine:
     def __init__(self, openai_api_key: str):
         """
         RAG 엔진 초기화
-        
         Args:
             openai_api_key: OpenAI API 키
         """
@@ -29,11 +27,10 @@ class RAGEngine:
             openai_api_key=openai_api_key
         )
         
-        # ChromaDB 클라이언트 초기화 (로컬 저장소)
-        self.chroma_client = chromadb.Client(Settings(
-            is_persistent=True,
-            persist_directory="./chroma_db"
-        ))
+        # ChromaDB 클라이언트 초기화 (최신 버전 호환 수정)
+        # 로컬 저장소 경로 설정
+        db_path = os.path.join(os.getcwd(), "chroma_db")
+        self.chroma_client = chromadb.PersistentClient(path=db_path)
         
         self.collection_name = "construction_documents"
         self.collection = None
@@ -47,8 +44,11 @@ class RAGEngine:
     
     def _count_tokens(self, text: str) -> int:
         """토큰 수 계산"""
-        encoding = tiktoken.encoding_for_model("gpt-4")
-        return len(encoding.encode(text))
+        try:
+            encoding = tiktoken.encoding_for_model("gpt-4")
+            return len(encoding.encode(text))
+        except:
+            return len(text) // 4 # 예외 발생 시 대략적인 계산
     
     def reset_database(self):
         """데이터베이스 초기화 (기존 컬렉션 삭제 후 재생성)"""
@@ -57,7 +57,8 @@ class RAGEngine:
         except:
             pass
         
-        self.collection = self.chroma_client.create_collection(
+        # create_collection 호출 시 metadata 설정 (코사인 유사도)
+        self.collection = self.chroma_client.get_or_create_collection(
             name=self.collection_name,
             metadata={"hnsw:space": "cosine"}
         )
@@ -65,7 +66,6 @@ class RAGEngine:
     def add_documents(self, documents: List[Tuple[str, str, str]]):
         """
         문서 추가 (카테고리, 파일명, 텍스트)
-        
         Args:
             documents: [(카테고리, 파일명, 텍스트), ...] 형태의 리스트
         """
@@ -108,13 +108,6 @@ class RAGEngine:
     def retrieve_relevant_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
         질의와 관련된 문서 검색
-        
-        Args:
-            query: 검색 질의
-            top_k: 반환할 문서 개수
-            
-        Returns:
-            관련 문서 리스트
         """
         if self.collection is None:
             return []
@@ -130,26 +123,24 @@ class RAGEngine:
         
         # 결과 포맷팅
         documents = []
-        if results['documents'] and len(results['documents']) > 0:
-            for i, doc in enumerate(results['documents'][0]):
+        # results['documents']가 존재하는지 확인
+        if results and 'documents' in results and results['documents']:
+            # results['documents'][0]은 첫 번째 쿼리에 대한 결과 리스트
+            docs_list = results['documents'][0]
+            metadatas_list = results['metadatas'][0] if 'metadatas' in results and results['metadatas'] else [{}] * len(docs_list)
+            distances_list = results['distances'][0] if 'distances' in results and results['distances'] else [0] * len(docs_list)
+
+            for i, doc_content in enumerate(docs_list):
                 documents.append({
-                    'content': doc,
-                    'metadata': results['metadatas'][0][i] if results['metadatas'] else {},
-                    'distance': results['distances'][0][i] if results['distances'] else 0
+                    'content': doc_content,
+                    'metadata': metadatas_list[i],
+                    'distance': distances_list[i]
                 })
         
         return documents
     
     def generate_risk_analysis(self, documents_text: str) -> str:
-        """
-        Risk Top 5 분석 생성
-        
-        Args:
-            documents_text: 모든 문서의 텍스트
-            
-        Returns:
-            Risk 분석 결과
-        """
+        """Risk Top 5 분석 생성"""
         from prompts import RISK_ANALYSIS_PROMPT
         
         prompt = RISK_ANALYSIS_PROMPT.format(documents=documents_text[:15000])  # 토큰 제한
@@ -166,20 +157,7 @@ class RAGEngine:
         persona_2_prompt: str,
         persona_3_prompt: str
     ) -> str:
-        """
-        사용자 질문에 대한 답변 생성
-        
-        Args:
-            question: 사용자 질문
-            risk_title: 선택된 리스크 제목
-            system_prompt: 시스템 프롬프트
-            persona_1_prompt: Persona 1 프롬프트
-            persona_2_prompt: Persona 2 프롬프트
-            persona_3_prompt: Persona 3 프롬프트
-            
-        Returns:
-            생성된 답변
-        """
+        """사용자 질문에 대한 답변 생성"""
         from prompts import CHATBOT_ANSWER_TEMPLATE
         
         # 관련 문서 검색
@@ -213,16 +191,7 @@ class RAGEngine:
         return response.content
     
     def generate_follow_up_questions(self, risk_title: str, conversation_history: str) -> List[str]:
-        """
-        추가 질문 3개 생성
-        
-        Args:
-            risk_title: 선택된 리스크 제목
-            conversation_history: 대화 히스토리
-            
-        Returns:
-            추가 질문 리스트
-        """
+        """추가 질문 3개 생성"""
         prompt = f"""다음 클레임 리스크와 대화 내용을 바탕으로, 사용자가 추가로 궁금해할 만한 질문 3개를 제안해주세요.
 
 **리스크**: {risk_title}
@@ -245,10 +214,12 @@ class RAGEngine:
             line = line.strip()
             if line and (line[0].isdigit() or line.startswith('-') or line.startswith('•')):
                 # 번호 제거
-                question = line.split('.', 1)[-1].strip()
+                try:
+                    question = line.split('.', 1)[-1].strip()
+                except:
+                    question = line
                 question = question.lstrip('-').lstrip('•').strip()
                 if question:
                     questions.append(question)
         
-        return questions[:3]  # 최대 3개
-
+        return questions[:3]

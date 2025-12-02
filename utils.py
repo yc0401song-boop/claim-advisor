@@ -1,131 +1,57 @@
-"""
-파일 처리 및 텍스트 추출 유틸리티 함수
-"""
 import os
-from typing import List, Tuple
-from pypdf import PdfReader
-from docx import Document
-import openpyxl
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredExcelLoader
 
-
-def extract_text_from_pdf(file) -> str:
-    """PDF 파일에서 텍스트 추출"""
-    try:
-        pdf_reader = PdfReader(file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-        return text
-    except Exception as e:
-        return f"[PDF 추출 오류: {str(e)}]"
-
-
-def extract_text_from_docx(file) -> str:
-    """DOCX 파일에서 텍스트 추출"""
-    try:
-        doc = Document(file)
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
-    except Exception as e:
-        return f"[DOCX 추출 오류: {str(e)}]"
-
-
-def extract_text_from_xlsx(file) -> str:
-    """XLSX 파일에서 텍스트 추출"""
-    try:
-        workbook = openpyxl.load_workbook(file)
-        text = ""
-        for sheet_name in workbook.sheetnames:
-            sheet = workbook[sheet_name]
-            text += f"\n=== Sheet: {sheet_name} ===\n"
-            for row in sheet.iter_rows(values_only=True):
-                row_text = "\t".join([str(cell) if cell is not None else "" for cell in row])
-                text += row_text + "\n"
-        return text
-    except Exception as e:
-        return f"[XLSX 추출 오류: {str(e)}]"
-
-
-def extract_text_from_txt(file) -> str:
-    """TXT 파일에서 텍스트 추출"""
-    try:
-        content = file.read()
-        if isinstance(content, bytes):
-            return content.decode('utf-8', errors='ignore')
-        return content
-    except Exception as e:
-        return f"[TXT 추출 오류: {str(e)}]"
-
-
-def extract_text_from_file(file, filename: str) -> str:
+def extract_text_from_file(uploaded_file, filename):
     """
-    파일 확장자에 따라 적절한 추출 함수 호출
-    
-    Args:
-        file: 업로드된 파일 객체
-        filename: 파일명
+    업로드된 파일 객체에서 텍스트를 추출합니다.
+    """
+    # 임시 파일로 저장
+    temp_dir = "./temp_files"
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
         
-    Returns:
-        추출된 텍스트
-    """
-    ext = os.path.splitext(filename)[1].lower()
-    
-    if ext == '.pdf':
-        return extract_text_from_pdf(file)
-    elif ext in ['.docx', '.doc']:
-        return extract_text_from_docx(file)
-    elif ext in ['.xlsx', '.xls']:
-        return extract_text_from_xlsx(file)
-    elif ext == '.txt':
-        return extract_text_from_txt(file)
-    else:
-        return f"[지원하지 않는 파일 형식: {ext}]"
+    file_path = os.path.join(temp_dir, filename)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-
-def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
-    """
-    텍스트를 청크로 분할
-    
-    Args:
-        text: 원본 텍스트
-        chunk_size: 청크 크기
-        chunk_overlap: 청크 간 중첩 크기
+    text = ""
+    try:
+        ext = os.path.splitext(filename)[1].lower()
         
-    Returns:
-        청크 리스트
-    """
-    chunks = []
-    start = 0
-    text_length = len(text)
-    
-    while start < text_length:
-        end = start + chunk_size
-        chunk = text[start:end]
-        chunks.append(chunk)
-        start += (chunk_size - chunk_overlap)
-    
-    return chunks
-
-
-def format_documents_for_prompt(documents: List[Tuple[str, str, str]]) -> str:
-    """
-    문서 정보를 프롬프트용 텍스트로 포맷팅
-    
-    Args:
-        documents: [(카테고리, 파일명, 텍스트), ...] 형태의 리스트
+        if ext == ".pdf":
+            loader = PyPDFLoader(file_path)
+            pages = loader.load()
+            text = "\n".join([p.page_content for p in pages])
+            
+        elif ext in [".docx", ".doc"]:
+            loader = Docx2txtLoader(file_path)
+            docs = loader.load()
+            text = "\n".join([d.page_content for d in docs])
+            
+        elif ext in [".xlsx", ".xls"]:
+            loader = UnstructuredExcelLoader(file_path)
+            docs = loader.load()
+            text = "\n".join([d.page_content for d in docs])
+            
+        elif ext == ".txt":
+            # txt 파일은 그냥 읽기
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
+                
+    except Exception as e:
+        print(f"Error reading file {filename}: {e}")
+        text = "Error reading file."
         
-    Returns:
-        포맷팅된 텍스트
+    return text
+
+def format_documents_for_prompt(documents):
     """
-    formatted = ""
+    프롬프트에 넣기 좋게 문서 내용을 하나의 문자열로 합칩니다.
+    documents: [(category, filename, text), ...]
+    """
+    formatted_text = ""
     for category, filename, text in documents:
-        formatted += f"\n{'='*50}\n"
-        formatted += f"📁 카테고리: {category}\n"
-        formatted += f"📄 파일명: {filename}\n"
-        formatted += f"{'='*50}\n"
-        formatted += f"{text[:2000]}...\n"  # 각 문서당 최대 2000자
-    
-    return formatted
-
+        formatted_text += f"\n[문서: {filename} ({category})]\n"
+        formatted_text += text[:2000] # 너무 길면 자름
+        formatted_text += "\n" + "-"*50 + "\n"
+    return formatted_text

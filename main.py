@@ -198,12 +198,6 @@ def settings_dialog():
 def parse_risks(risk_text: str) -> List[dict]:
     """
     Risk 분석 텍스트를 파싱하여 리스크 리스트로 변환
-    
-    Args:
-        risk_text: AI가 생성한 Risk 분석 텍스트
-        
-    Returns:
-        리스크 딕셔너리 리스트
     """
     risks = []
     
@@ -507,4 +501,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
