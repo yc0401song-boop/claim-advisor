@@ -1,3 +1,11 @@
+# --------------------------------------------------------------------------------
+# [Streamlit Cloud 배포용 필수 설정 - 이 부분이 없으면 서버에서 에러가 납니다!]
+# --------------------------------------------------------------------------------
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+# --------------------------------------------------------------------------------
+
 """
 건설공사 클레임 어드바이저 - 메인 애플리케이션
 """
@@ -71,6 +79,7 @@ st.markdown("""
     
     .assistant-message {
         background-color: #1E1E1E;
+        text-align: right; /* 답변도 우측 정렬되는 문제 방지 */
     }
     
     /* 버튼 스타일 */
@@ -97,7 +106,12 @@ def initialize_session_state():
     """세션 상태 초기화"""
     if 'initialized' not in st.session_state:
         # API 키
-        st.session_state.openai_api_key = os.getenv('OPENAI_API_KEY', '')
+        # Streamlit Cloud에서는 st.secrets를 우선적으로 확인합니다.
+        if "OPENAI_API_KEY" in st.secrets:
+             st.session_state.openai_api_key = st.secrets["OPENAI_API_KEY"]
+        else:
+             st.session_state.openai_api_key = os.getenv('OPENAI_API_KEY', '')
+             
         st.session_state.exa_api_key = os.getenv('EXA_API_KEY', '')
         
         # 프롬프트 설정 (기본값)
@@ -262,7 +276,7 @@ def render_sidebar():
             if not uploaded_files:
                 st.error("⚠️ 최소 1개 이상의 파일을 업로드해주세요!")
             elif not st.session_state.openai_api_key:
-                st.error("⚠️ OpenAI API 키가 설정되지 않았습니다. .env 파일을 확인해주세요.")
+                st.error("⚠️ OpenAI API 키가 없습니다! Settings -> Secrets에 키가 있는지 확인해주세요.")
             else:
                 analyze_documents(uploaded_files)
         
@@ -312,11 +326,14 @@ def analyze_documents(uploaded_files: dict):
             if len(risks) >= 5:
                 st.session_state.risks = risks[:5]
             else:
-                # 파싱 실패 시 전체 텍스트를 임시로 저장
+                # 파싱 실패 시 (API 오류 등) 전체 텍스트를 임시로 저장
                 st.session_state.risks = [
-                    {"title": f"Risk {i+1}", "description": risk_analysis}
+                    {"title": f"Risk {i+1}", "description": "분석 결과를 불러오지 못했습니다. API Key나 파일 내용을 확인해주세요."}
                     for i in range(5)
                 ]
+                # 여기서 에러 내용을 화면에 보여줌
+                if not risks and risk_analysis:
+                     st.warning(f"AI 응답 원문: {risk_analysis[:200]}...")
             
             st.session_state.risks_analyzed = True
             st.session_state.selected_risk = None
